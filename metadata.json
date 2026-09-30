@@ -1,0 +1,6 @@
+{
+  "name": "JM Estoque",
+  "description": "Controle de estoque de Gás e Água da Drogaria JM com lançamentos, pendências de vasilhame, resumo diário, calculadora e relatórios para WhatsApp.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
