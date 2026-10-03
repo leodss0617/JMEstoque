@@ -373,3 +373,9 @@ Arquivos alterados/adicionados: `app/build.gradle.kts`, `app/src/main/assets/ind
 Build local `./gradlew :app:assembleDebug --no-daemon`: duas execuções aprovadas (2m24s e 2m39s); verificação final após últimos ajustes **BUILD SUCCESSFUL in 2m25s**, saída 0, em `build-v945-verified.log`. Certificado do APK inspecionado: SHA-256 `5ddd1dfb90c132a677800df1ccfd6164cb931e41ada2a1eeaedcbcb61461038b`, igual ao certificado anterior. A configuração atual do Actions já restaura a assinatura via Secret; não foi alterada nem exposta.
 
 Pendências reais: ADB sem dispositivos conectados; falta validar notificações reais normais/Business, acesso/reconexão pelo sistema, funcionamento em segundo plano, permissão do alerta local, scroll/pintura/digitação e relatório grande no aparelho. Testes Android de exemplo continuam com a limitação de dependências descrita na v9.4.4; não foram declarados aprovados. Parser é heurístico: informações não reconhecidas exigem revisão manual. Publicação e execução Actions serão registradas após push.
+
+### Publicação confirmada
+
+Commit de implementação: `2e9fe84205537d1465534ef92cdb49be30db6996` — `JM Estoque v9.4.5 - notificações, totais e desempenho`. `git push origin main` concluído (`1746b86..2e9fe84`). O workflow **Build Android APK** iniciou para esse SHA: [execução 37086664933](https://github.com/leodss0617/JMEstoque/actions/runs/37086664933), consultada com status `in_progress`. Isso confirma início, não conclusão do CI. Este registro de evidências é publicado em commit documental posterior.
+
+APK final local: `app/build/outputs/apk/debug/app-debug.apk`; metadata confirma applicationId `com.aistudio.jmestoque.bqkrvz`, versão 9.4.5/code 98. Assinatura final novamente verificada e idêntica à anterior. Checkout limpo após commit da implementação; nenhum secret, keystore, backup ou log foi incluído.
