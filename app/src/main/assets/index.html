@@ -1936,7 +1936,7 @@ body.dark .jm-date-chip{
     <div class="header-text">
       <h1>DROGARIA JM</h1>
       <p>Controle de estoque · Gás & Água</p>
-      <span class="ver-pill" id="verApp">v9.4.4</span>
+      <span class="ver-pill" id="verApp">v9.4.5</span>
     </div>
   </div>
 </header>
@@ -1990,18 +1990,7 @@ body.dark .jm-date-chip{
     <button class="btn" type="button" onclick="jmRegistrarEmprestimo(false)">Registrar empréstimo recebido</button>
     <button class="btn gray" type="button" onclick="jmRegistrarEmprestimo(true)">Registrar devolução</button>
     <details><summary>Histórico de empréstimos e devoluções</summary><div id="emprestimosHistorico"></div></details>
-  </div>  <div class="card gas">
-    <h2>⚙️ Total físico — GÁS</h2>
-    <p class="note">Esse número é fixo. Só mude aqui (ou quando chegar carga / enviar vazios ao fornecedor).</p>
-    <label>Total físico de botijões</label>
-    <input type="number" id="iTotGas" min="0" style="font-weight:800" oninput="autoVazios('gas')"/>
-    <small class="note">Ex.: 203. Se cheios = 81 e separados = 19 → vazios = 102.</small>
-  </div>  <div class="card agua">
-    <h2>⚙️ Total físico — ÁGUA</h2>
-    <p class="note">Mesma lógica dos botijões.</p>
-    <label>Total físico de galões</label>
-    <input type="number" id="iTotAgua" min="0" style="font-weight:800" oninput="autoVazios('agua')"/>
-  </div><button class="btn" onclick="saveCfg()">Salvar totais físicos</button>
+  </div><input type="hidden" id="iTotGas"><input type="hidden" id="iTotAgua">
 </section>
 
 <section id="config" class="page">
@@ -2104,7 +2093,7 @@ body.dark .jm-date-chip{
   </div>
   <div class="card config-group" id="configSobre"><h2>ℹ️ Sobre</h2>
   <div class="card">
-    <h3>JM Estoque v9.4.4</h3>
+    <h3>JM Estoque v9.4.5</h3>
     <p>Drogaria JM — Controle de estoque Gás e Água.</p>
     <p class="note">Sem preços. Feito para uso no celular.</p>
     <button class="btn" id="btnInstalar" onclick="instalarApp()">📲 Instalar no celular</button>
@@ -2359,7 +2348,7 @@ body.dark .jm-date-chip{
     <h2 style="margin-top:0">📦 Separados e vasilhame <button type="button" class="help-btn" onclick="helpGeral('Pendentes','Clientes com separado, dívida de vasilhame ou vazio deixado na loja. O crédito reduz o que precisa trazer na entrega.')">?</button></h2>
     <p class="note">Fica salvo até entregar / devolver / retirar. Inclui vazios deixados na loja. Datas manuais: editar e apagar.</p>
     <label style="margin-top:0">Pesquisar cliente</label>
-    <input id="pendBusca" placeholder="digite o nome..." oninput="renderPendentes()" style="margin-bottom:8px"/>
+    <input id="pendBusca" placeholder="digite o nome..." oninput="jm945BuscaPendentes()" style="margin-bottom:8px"/>
     <button type="button" class="btn gray" style="margin:8px 0" onclick="apagarTodosPendentes()">🗑️ Apagar todos os pendentes</button>
     <div id="pendLista"></div>
     <button class="btn" onclick="gerarRelPendentes()">📤 Relatório de todos</button>
@@ -2732,14 +2721,14 @@ function calc(){
 function autoVazios(qual){
   const c = loadCfg();
   if(qual === 'gas'){
-    const tot = Number(document.getElementById('iTotGas')?.value) || c.totGas || (c.gc+c.gv+c.gs);
+    const tot = Number(document.getElementById('iTotGas')?.value ?? c.totGas ?? (c.gc+c.gv+c.gs));
     const che = Number(document.getElementById('iGC')?.value) || 0;
     const sep = Number(document.getElementById('iGS')?.value) || 0;
     const vaz = Math.max(0, tot - che - sep);
     const el = document.getElementById('iGV');
     if(el) el.value = vaz;
   } else if(qual === 'agua'){
-    const tot = Number(document.getElementById('iTotAgua')?.value) || c.totAgua || (c.ac+c.av);
+    const tot = Number(document.getElementById('iTotAgua')?.value ?? c.totAgua ?? (c.ac+c.av));
     const che = Number(document.getElementById('iAC')?.value) || 0;
     // Separados de água NÃO entra na soma total (apenas visual)
     const vaz = Math.max(0, tot - che);
@@ -2961,8 +2950,8 @@ function fillCfgUI(){
   if(document.getElementById('iAC')) document.getElementById('iAC').value = c.ac;
   if(document.getElementById('iAV')) document.getElementById('iAV').value = c.av;
   if(document.getElementById('iAS')) document.getElementById('iAS').value = c.as;
-  if(document.getElementById('iTotGas')) document.getElementById('iTotGas').value = c.totGas || (c.gc+c.gv+c.gs);
-  if(document.getElementById('iTotAgua')) document.getElementById('iTotAgua').value = c.totAgua || (c.ac+c.av);
+  if(document.getElementById('iTotGas')) document.getElementById('iTotGas').value = c.totGas ?? (c.gc+c.gv+c.gs);
+  if(document.getElementById('iTotAgua')) document.getElementById('iTotAgua').value = c.totAgua ?? (c.ac+c.av);
   if(document.getElementById('optDark')) document.getElementById('optDark').checked = !!c.dark;
   if(document.getElementById('optAguaSepId')) document.getElementById('optAguaSepId').checked = c.aguaSepSoId !== false;
   if(document.getElementById('iCorGas')) document.getElementById('iCorGas').value = c.corGas || '#C62828';
@@ -3997,7 +3986,7 @@ function renderPendentes(){
   if(!pendsAgua.length){
     h += '<p class="note" style="margin:4px 0 10px">✅ Nenhuma pendência de água registrada.</p>';
   } else {
-    pendsAgua.forEach(p => {
+    pendsAgua.slice(0,window.jmPendLimit||40).forEach(p => {
       const dtInfo = p.ultDataAgua ? `<span style="display:inline-flex;align-items:center;gap:3px;font-size:11px;color:var(--muted);font-weight:700">📅 ${p.ultDataAgua} ${p.ultHoraAgua ? '⏰ ' + p.ultHoraAgua : ''}</span>` : '';
       h += `
         <div class="card" style="margin:8px 0;padding:12px 14px;border-left:5px solid #0284C7;background:var(--sec)">
@@ -4054,7 +4043,7 @@ function renderPendentes(){
   if(!pendsGas.length){
     h += '<p class="note" style="margin:4px 0 10px">✅ Nenhuma pendência de gás registrada.</p>';
   } else {
-    pendsGas.forEach(p => {
+    pendsGas.slice(0,window.jmPendLimit||40).forEach(p => {
       const dtInfo = p.ultDataGas ? `<span style="display:inline-flex;align-items:center;gap:3px;font-size:11px;color:var(--muted);font-weight:700">📅 ${p.ultDataGas} ${p.ultHoraGas ? '⏰ ' + p.ultHoraGas : ''}</span>` : '';
       h += `
         <div class="card" style="margin:8px 0;padding:12px 14px;border-left:5px solid #DC2626;background:var(--sec)">
@@ -4098,6 +4087,8 @@ function renderPendentes(){
   }
   h += `</div>`;
 
+  if(Math.max(pendsAgua.length,pendsGas.length)>(window.jmPendLimit||40)) h += '<button class="btn" onclick="window.jmPendLimit=(window.jmPendLimit||40)+40;renderPendentes()">Mostrar mais</button>';
+  if(window.jm945Metrics)window.jm945Metrics.itensPendentes={total:pendsAgua.length+pendsGas.length,renderizados:Math.min(pendsAgua.length,window.jmPendLimit||40)+Math.min(pendsGas.length,window.jmPendLimit||40)};
   el.innerHTML = h;
 }
 async function apagarTodosPendentes(){
@@ -11109,8 +11100,8 @@ A dívida só é criada quando você disser claramente:
     const c=loadCfg();
     const p=pendTot84();
 
-    const tg=n84(c.totGas) || (n84(c.gc)+n84(c.gv)+n84(c.gs));
-    const ta=n84(c.totAgua) || (n84(c.ac)+n84(c.av));
+    const tg=(c.totGas == null ? n84(c.gc)+n84(c.gv)+n84(c.gs) : n84(c.totGas));
+    const ta=(c.totAgua == null ? n84(c.ac)+n84(c.av) : n84(c.totAgua));
 
     /*
      * Mantem os CHEIOS atuais do Inicio.
@@ -11154,8 +11145,8 @@ A dívida só é criada quando você disser claramente:
     let gc=n84(c.gc);
     let ac=n84(c.ac);
 
-    let totG=n84(c.totGas) || (n84(c.gc)+n84(c.gv)+n84(c.gs));
-    let totA=n84(c.totAgua) || (n84(c.ac)+n84(c.av));
+    let totG=(c.totGas == null ? n84(c.gc)+n84(c.gv)+n84(c.gs) : n84(c.totGas));
+    let totA=(c.totAgua == null ? n84(c.ac)+n84(c.av) : n84(c.totAgua));
 
     let empG=Math.max(0,n84(c.empG));
     let empA=Math.max(0,n84(c.empA));
@@ -12477,7 +12468,7 @@ A dívida só é criada quando você disser claramente:
    * - produto pode ser inferido pela pendência;
    * - variações de "entregar o que estava separado".
    */
-  window.interpretarFraseZap=async function(autoSalvar){
+  window.interpretarFraseZap=async function(autoSalvar, deliveryId){
     const input=document.getElementById('fFraseZap');
     const prev=document.getElementById('fraseZapPreview');
 
@@ -12560,7 +12551,9 @@ A dívida só é criada quando você disser claramente:
      * reverse + unshift preserva a ordem visual digitada.
      */
     parsed.slice().reverse().forEach((p,i)=>{
-      lista.unshift(makeLan86(p,i));
+      const item=makeLan86(p,i);
+      if(deliveryId)item.id='remote_delivery_'+deliveryId+'_'+i;
+      if(!lista.some(x=>x.id===item.id))lista.unshift(item);
     });
 
     saveLanArr(lista);
@@ -12631,6 +12624,7 @@ A dívida só é criada quando você disser claramente:
   let lastJson='';
   let busy=false;
   let lastTick=0;
+  let refreshing=false;
 
   function esc(v){
     return String(v??'').replace(/[&<>"']/g,m=>({
@@ -12887,7 +12881,8 @@ A dívida só é criada quando você disser claramente:
 
       f.value=phrase(d);
 
-      await interpretarFraseZap(true);
+      await interpretarFraseZap(true, String(d.id));
+      if(!loadLan().some(x=>x.id==='remote_delivery_'+d.id+'_0')) throw new Error('Lançamento não confirmado');
 
       const after=(f.value||'').trim();
       const preview=(document.getElementById('fraseZapPreview')?.textContent||'').toLowerCase();
@@ -12932,6 +12927,7 @@ A dívida só é criada quando você disser claramente:
   }
 
   window.jm92Refresh=async function(force){
+    if(refreshing)return; refreshing=true;
     ensure();
 
     try{
@@ -12949,7 +12945,7 @@ A dívida só é criada quando você disser claramente:
       if(box){
         box.innerHTML=`<div class="jm92-status jm92-err">❌ ${esc(e.message)}</div>`;
       }
-    }
+    } finally { refreshing=false; }
   };
 
   window.jm92Config=async function(){
@@ -13115,7 +13111,7 @@ A dívida só é criada quando você disser claramente:
       jm92Refresh(false);
       tick();
     }
-  },7000);
+  },30000);
 
   setTimeout(()=>{
     ensure();
@@ -13125,26 +13121,10 @@ A dívida só é criada quando você disser claramente:
   },800);
 })();
 </script>
-<script id="jm-v93-monitor">
-(function(){
- if(window.__jmV93Loaded)return; window.__jmV93Loaded=true;
- const API='https://bnycpdjgpicvqvxwouil.supabase.co/functions/v1/jm-whatsapp-gateway';
- const KEY='ITyHiTGc7tykzwOrV6ZjDFx4irNMfQi8';
- const B=()=>window.AndroidBridge||null;
- const enabled=()=>{try{return !!(B()&&B().isWhatsAppMonitorEnabled&&B().isWhatsAppMonitorEnabled())}catch(e){return false}};
- const saved=()=>{try{return (B()&&B().getWhatsAppMonitorTitle&&B().getWhatsAppMonitorTitle())||'Farmácia JM'}catch(e){return'Farmácia JM'}};
- async function cloud(body){const r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json','x-jm-key':KEY},body:JSON.stringify(body)});const t=await r.text();let d={};try{d=t?JSON.parse(t):{}}catch(e){}if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d}
- function status(){const e=document.getElementById('jm93Status');if(!e)return;if(enabled()){e.className='jm93-status jm93-ok';e.innerHTML='✅ Monitor ativo. O JM Estoque está observando somente a conversa autorizada do WhatsApp.'}else{e.className='jm93-status jm93-warn';e.innerHTML='⚠️ Monitor desativado. Toque em <b>Abrir acesso às notificações</b> e ative <b>JM Estoque</b>.'}const old=document.getElementById('jm92Status');if(old){old.className=enabled()?'jm92-status jm92-ok':'jm92-status jm92-warn';old.innerHTML=enabled()?'✅ Entrada de pedidos pelo monitor local está ativa.':'🟡 A fila está pronta, mas o monitor local está desligado.'}}
- function ensure(){const cfg=document.getElementById('configWhatsApp');if(!cfg||document.getElementById('jm93Card')){status();return}const c=document.createElement('div');c.id='jm93Card';c.className='card jm93-card';c.innerHTML=`<h2>👁️ Monitor do WhatsApp normal</h2><div id="jm93Status" class="jm93-status">Verificando...</div><p class="jm93-note">O app só aceita notificações do WhatsApp cuja conversa tenha o nome configurado abaixo.</p><label>NOME MOSTRADO NA NOTIFICAÇÃO</label><input id="jm93Title" value="${saved()}" placeholder="Ex.: Farmácia JM"><small class="jm93-note">No seu print aparece <b>Farmácia JM</b>.</small><button class="btn blue" onclick="jm93Save()">💾 Salvar contato observado</button><button class="btn gray" onclick="jm93Open()">🔔 Abrir acesso às notificações</button><button class="btn gray" onclick="jm93Check()">🔄 Verificar se está ativo</button><p class="jm93-note">🔒 Outras conversas são ignoradas localmente. 🚚 O pedido recebido não altera estoque; só depois da confirmação de entrega.</p>`;const old=document.getElementById('jm92Config');if(old)old.insertAdjacentElement('beforebegin',c);else cfg.appendChild(c);status()}
- window.jm93Save=async()=>{const title=(document.getElementById('jm93Title')?.value||'').trim();if(title.length<2){toast('Informe o nome da conversa.','err');return}try{B().saveWhatsAppMonitorTitle(title);await cloud({action:'set_config',authorized_notification_title:title});toast('Contato observado salvo.','ok');status()}catch(e){toast('Erro: '+e.message,'err')}};
- window.jm93Open=()=>{try{B().openWhatsAppMonitorSettings()}catch(e){toast('Não consegui abrir a configuração.','err')}};
- window.jm93Check=status;
- document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){ensure();setTimeout(status,400)}});
- setInterval(()=>{if(document.visibilityState==='visible')status()},5000);
- setTimeout(ensure,700);
-})();
-</script>
+
 <script src="operacional-ui.js"></script>
 <script src="historico-hoje.js"></script>
+<script src="entregas.js"></script>
+<script src="v945-ui.js"></script>
 </body>
 </html>

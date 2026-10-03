@@ -10,8 +10,8 @@ android {
         applicationId = "com.aistudio.jmestoque.bqkrvz"
         minSdk = 24
         targetSdk = 34
-        versionCode = 97
-        versionName = "9.4.4"
+        versionCode = 98
+        versionName = "9.4.5"
     }
 
     signingConfigs {

@@ -47,6 +47,16 @@ function setup(gc=-8,empG=0){
  store.set('jm_lan',JSON.stringify(ls));store.set('jm_v84_base_ids',JSON.stringify(['id:l_1_test']));
 }
 function add(x){sandbox.saveLanArr([x,...sandbox.loadLan()]);}
+test('v945 totais físicos zero persistem sem fallback e sem apagar histórico',()=>{
+ setup();const before=store.get('jm_lan');const cfg=sandbox.loadCfg();cfg.totGas=0;cfg.totAgua=0;sandbox.saveCfgObj(cfg);
+ assert.equal(sandbox.loadCfg().totGas,0);assert.equal(sandbox.loadCfg().totAgua,0);
+ assert.equal(sandbox.calc().totG,0);assert.equal(sandbox.calc().totA,0);assert.equal(store.get('jm_lan'),before);
+});
+test('v945 totais físicos persistem em nova leitura e backup/restauração',()=>{
+ setup();const cfg=sandbox.loadCfg();cfg.totGas=205;cfg.totAgua=51;sandbox.saveCfgObj(cfg);
+ const backup=JSON.stringify(Object.fromEntries(store));store.clear();for(const [k,v]of Object.entries(JSON.parse(backup)))store.set(k,v);
+ assert.equal(sandbox.calc().totG,205);assert.equal(sandbox.calc().totA,51);
+});
 test('Caso A: entrada reduz déficit uma vez; histórico-base intacto',()=>{
  setup();add(lan(2,'Chegou carga',5));const s=sandbox.calc();
  assert.equal(s.gc,-3);assert.equal(s.operacionalGas.separadosLivres,14);assert.equal(s.totG,203);
@@ -112,6 +122,14 @@ test('Defaults seguros e saldo negativo não é zerado',()=>{
  setup(-8);const cfg=JSON.parse(store.get('jm_cfg'));delete cfg.mostrarChatLancamentos;delete cfg.empG;store.set('jm_cfg',JSON.stringify(cfg));
  assert.equal(sandbox.loadCfg().mostrarChatLancamentos,true);assert.equal(sandbox.calc().empG,0);assert.equal(sandbox.calc().gc,-8);
 });
+test('v945 entrega local afeta estoque uma vez somente após confirmação',()=>{
+ setup();const api=require('../app/src/main/assets/entregas.js'),state={orders:[],seen:{}};
+ const event=(id,text)=>({id,text,timestamp:Date.now(),conversationId:'teste',sender:'Entregador',packageName:'com.whatsapp'});
+ const before=sandbox.calc().gc;api.accept(state,event('pedido','1 gás casa Maria pix'));
+ sandbox.saveLanArr(api.launch(state.orders[0],sandbox.loadLan()));assert.equal(sandbox.calc().gc,before);
+ api.accept(state,event('confirmacao','entregue'));sandbox.saveLanArr(api.launch(state.orders[0],sandbox.loadLan()));assert.equal(sandbox.calc().gc,before-1);
+ sandbox.saveLanArr(api.launch(state.orders[0],sandbox.loadLan()));assert.equal(sandbox.calc().gc,before-1);
+});
 (async()=>{
  setup(-20);add(lan(2,'Empréstimo recebido',5));sandbox.fillInicioFromCalc();
  get('iGC').value='-18';await sandbox.saveCfg();
@@ -140,6 +158,7 @@ test('Defaults seguros e saldo negativo não é zerado',()=>{
   assert.equal(requests.filter(x=>x.action==='mark_registered').length,1);
   assert.equal(get('chatLancamentos').style.display,'none');
  });
+ draft.status='delivered'; // servidor pode repetir se a confirmação HTTP se perdeu
  await sandbox.jm92Launch('pedido-teste');
  test('Pedido já registrado não é relançado pela fila',()=>assert.equal(sandbox.calc().gc,gc-1));
  get('fFraseZap').value='devolver 1 gás emprestado para empresa';

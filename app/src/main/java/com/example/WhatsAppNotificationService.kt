@@ -1,232 +1,94 @@
 package com.example
 
 import android.app.Notification
-import android.content.Context
+import android.content.ComponentName
+import android.os.Build
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
+import org.json.JSONArray
 import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
 import java.security.MessageDigest
-import java.util.Locale
+import java.text.Normalizer
 import java.util.concurrent.Executors
 
+/** Local durable inbox. No network dependency and no stock writes. */
 class WhatsAppNotificationService : NotificationListenerService() {
-
     companion object {
-        private const val API_URL = "https://bnycpdjgpicvqvxwouil.supabase.co/functions/v1/jm-whatsapp-gateway"
-        private const val APP_KEY = "ITyHiTGc7tykzwOrV6ZjDFx4irNMfQi8"
-        private const val PREFS = "jm_whatsapp_monitor"
-        private const val KEY_TITLE = "authorized_title"
-        private const val DEFAULT_TITLE = "Farmácia JM"
-        private const val SEEN_WINDOW_MS = 30000L
+        const val PREFS = "jm_whatsapp_monitor"
+        @Volatile var connected = false
+        val lock = Any()
+        @Volatile var onCaptured: (() -> Unit)? = null
     }
-
-    private val executor = Executors.newSingleThreadExecutor()
-
+    private val worker = Executors.newSingleThreadExecutor()
+    private val prefs get() = getSharedPreferences(PREFS, MODE_PRIVATE)
+    override fun onListenerConnected() {
+        connected = true
+        prefs.edit().putLong("lastConnection", System.currentTimeMillis()).apply()
+        try { activeNotifications?.forEach { onNotificationPosted(it) } } catch (e: Exception) { error(e) }
+    }
+    override fun onListenerDisconnected() {
+        connected = false
+        val now = System.currentTimeMillis()
+        prefs.edit().putLong("lastDisconnection", now).apply()
+        if (prefs.getBoolean("enabled", true) && now - prefs.getLong("lastRebind", 0) > 60000) {
+            prefs.edit().putLong("lastRebind", now).apply()
+            try { requestRebind(ComponentName(this, WhatsAppNotificationService::class.java)) }
+            catch (e: Exception) { error(e) }
+        }
+    }
+    private fun norm(s: String) = Normalizer.normalize(s, Normalizer.Form.NFD)
+        .replace("\\p{M}+".toRegex(), "").lowercase(java.util.Locale.ROOT).trim().replace("\\s+".toRegex(), " ")
+    private fun error(e: Exception) { prefs.edit().putString("lastError", e.javaClass.simpleName).apply() }
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
-        if (sbn == null) return
-        if (sbn.packageName != "com.whatsapp") return
-
-        val notification = sbn.notification ?: return
-
-        if (notification.flags and Notification.FLAG_GROUP_SUMMARY != 0) {
-            return
-        }
-
-        val extras = notification.extras ?: return
-
-        val title = extras
-            .getCharSequence(Notification.EXTRA_TITLE)
-            ?.toString()
-            ?.trim()
-            .orEmpty()
-
-        val allowed = getSharedPreferences(
-            PREFS,
-            Context.MODE_PRIVATE
-        ).getString(
-            KEY_TITLE,
-            DEFAULT_TITLE
-        ).orEmpty().trim()
-
-        if (allowed.isBlank()) return
-        if (!matchesAuthorizedTitle(title, allowed)) return
-
-        val texts = LinkedHashSet<String>()
-
-        extras
-            .getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
-            ?.forEach { line ->
-                val value = line?.toString()?.trim().orEmpty()
-                if (value.isNotBlank()) texts.add(value)
-            }
-
-        val bigText = extras
-            .getCharSequence(Notification.EXTRA_BIG_TEXT)
-            ?.toString()
-            ?.trim()
-            .orEmpty()
-
-        if (bigText.isNotBlank()) texts.add(bigText)
-
-        val normalText = extras
-            .getCharSequence(Notification.EXTRA_TEXT)
-            ?.toString()
-            ?.trim()
-            .orEmpty()
-
-        if (normalText.isNotBlank()) texts.add(normalText)
-        if (texts.isEmpty()) return
-
-        for (text in texts) {
-            if (isNoise(text)) continue
-
-            val dedupeKey = sha256(
-                normalize(title) + "|" + normalize(text)
-            )
-
-            if (wasSeenRecently(dedupeKey)) continue
-
-            rememberSeen(dedupeKey)
-
-            executor.execute {
-                postMessage(
-                    title = title,
-                    text = text,
-                    notificationId = dedupeKey,
-                    postTime = sbn.postTime
-                )
-            }
-        }
-    }
-
-    private fun matchesAuthorizedTitle(
-        actual: String,
-        allowed: String
-    ): Boolean {
-        val a = normalize(actual)
-        val b = normalize(allowed)
-
-        if (a.isBlank() || b.isBlank()) return false
-
-        return a == b || a.contains(b) || b.contains(a)
-    }
-
-    private fun normalize(value: String): String {
-        return value
-            .lowercase(Locale.ROOT)
-            .replace('á', 'a')
-            .replace('à', 'a')
-            .replace('ã', 'a')
-            .replace('â', 'a')
-            .replace('é', 'e')
-            .replace('ê', 'e')
-            .replace('í', 'i')
-            .replace('ó', 'o')
-            .replace('ô', 'o')
-            .replace('õ', 'o')
-            .replace('ú', 'u')
-            .replace('ç', 'c')
-            .trim()
-    }
-
-    private fun isNoise(text: String): Boolean {
-        val n = normalize(text)
-
-        if (n.contains("nova mensagem")) return true
-        if (n.contains("novas mensagens")) return true
-        if (n.contains("whatsapp web")) return true
-        if (n.contains("procurando novas mensagens")) return true
-        if (n.contains("verificando novas mensagens")) return true
-        if (n.contains("backup")) return true
-        if (n.contains("chamada de voz")) return true
-        if (n.contains("chamada de video")) return true
-
-        return false
-    }
-
-    private fun wasSeenRecently(key: String): Boolean {
-        val prefs = getSharedPreferences(
-            PREFS,
-            Context.MODE_PRIVATE
-        )
-
-        val last = prefs.getLong("seen_" + key, 0L)
-
-        if (last <= 0L) return false
-
-        return System.currentTimeMillis() - last < SEEN_WINDOW_MS
-    }
-
-    private fun rememberSeen(key: String) {
-        getSharedPreferences(
-            PREFS,
-            Context.MODE_PRIVATE
-        ).edit()
-            .putLong("seen_" + key, System.currentTimeMillis())
-            .apply()
-    }
-
-    private fun postMessage(
-        title: String,
-        text: String,
-        notificationId: String,
-        postTime: Long
-    ) {
-        var con: HttpURLConnection? = null
-
-        try {
-            con = URL(API_URL).openConnection() as HttpURLConnection
-
-            con.requestMethod = "POST"
-            con.connectTimeout = 10000
-            con.readTimeout = 10000
-            con.doOutput = true
-            con.setRequestProperty("Content-Type", "application/json")
-            con.setRequestProperty("x-jm-key", APP_KEY)
-
-            val payload = JSONObject()
-                .put("action", "notification_message")
-                .put("source_title", title)
-                .put("text", text)
-                .put("notification_id", notificationId)
-                .put("package_name", "com.whatsapp")
-                .put("posted_at", postTime)
-                .toString()
-
-            con.outputStream.use { output ->
-                output.write(payload.toByteArray(Charsets.UTF_8))
-            }
-
+        if (sbn == null || !prefs.getBoolean("enabled", true)) return
+        if (sbn.packageName != "com.whatsapp" && !(sbn.packageName == "com.whatsapp.w4b" && prefs.getBoolean("business", false))) return
+        worker.execute {
+            val start = System.nanoTime()
             try {
-                val stream =
-                    if (con.responseCode in 200..299) {
-                        con.inputStream
-                    } else {
-                        con.errorStream
+                val n = sbn.notification
+                if (n.flags and Notification.FLAG_GROUP_SUMMARY != 0) return@execute
+                val e = n.extras
+                val title = e.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)?.toString()?.takeIf { it.isNotBlank() }
+                    ?: e.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
+                val allowed = prefs.getString("authorized_title", "Farmácia JM").orEmpty()
+                if (allowed.isBlank() || norm(title) != norm(allowed)) return@execute
+                val messages = Notification.MessagingStyle.Message.getMessagesFromBundleArray(e.getParcelableArray(Notification.EXTRA_MESSAGES))
+                val items = mutableListOf<Triple<String, String, Long>>()
+                messages.forEach { m -> items.add(Triple(m.text?.toString().orEmpty(), (if (Build.VERSION.SDK_INT >= 28) m.senderPerson?.name?.toString() else m.sender?.toString()) ?: title, m.timestamp.takeIf { it > 0 } ?: sbn.postTime)) }
+                if (items.isEmpty()) {
+                    val lines = e.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
+                    if (!lines.isNullOrEmpty()) lines.forEach { items.add(Triple(it.toString(), title, n.`when`.takeIf { t -> t > 0 } ?: sbn.postTime)) }
+                    else {
+                        val text = e.getCharSequence(Notification.EXTRA_BIG_TEXT) ?: e.getCharSequence(Notification.EXTRA_TEXT)
+                        if (text != null) items.add(Triple(text.toString(), title, n.`when`.takeIf { it > 0 } ?: sbn.postTime))
                     }
-
-                stream?.bufferedReader()?.use { it.readText() }
-            } catch (_: Exception) {
-            }
-
-        } catch (_: Exception) {
-        } finally {
-            try {
-                con?.disconnect()
-            } catch (_: Exception) {
-            }
+                }
+                synchronized(lock) {
+                    val inbox = JSONArray(prefs.getString("inbox", "[]"))
+                    val seen = JSONObject(prefs.getString("seen", "{}") ?: "{}")
+                    val now = System.currentTimeMillis()
+                    val day = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.ROOT).format(java.util.Date(now))
+                    var captured = if (prefs.getString("day", "") == day) prefs.getInt("captured", 0) else 0
+                    var duplicates = if (prefs.getString("day", "") == day) prefs.getInt("duplicates", 0) else 0
+                    for ((text, sender, time) in items) {
+                        if (text.isBlank() || Regex("^(\\d+ )?(novas? mensagens?|mensagens?)( de .*)?$|^(procurando|verificando) novas mensagens", RegexOption.IGNORE_CASE).containsMatchIn(norm(text))) continue
+                        val identity = listOf(sbn.packageName, title, sender, norm(text), sbn.key, sbn.id, sbn.tag, time / 1000).joinToString("|")
+                        val id = MessageDigest.getInstance("SHA-256").digest(identity.toByteArray()).joinToString("") { "%02x".format(it) }
+                        if (seen.has(id)) { duplicates++; continue }
+                        inbox.put(JSONObject().put("id", id).put("packageName", sbn.packageName).put("conversationId", sbn.packageName + ":" + title)
+                            .put("sender", sender).put("text", text).put("timestamp", time).put("capturedAt", now)
+                            .put("subText", e.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString().orEmpty()))
+                        seen.put(id, now); captured++
+                    }
+                    val keys = seen.keys().asSequence().toList()
+                    keys.filter { now - seen.optLong(it) > 7 * 86400000L }.forEach { seen.remove(it) }
+                    if (!prefs.edit().putString("inbox", inbox.toString()).putString("seen", seen.toString()).putString("day", day)
+                        .putInt("captured", captured).putInt("duplicates", duplicates).putLong("lastNotification", now)
+                        .putString("lastConversation", title).putLong("processingMs", (System.nanoTime()-start)/1000000).commit()) throw IllegalStateException("Persistencia")
+                }
+                onCaptured?.invoke()
+            } catch (ex: Exception) { error(ex) }
         }
     }
-
-    private fun sha256(value: String): String {
-        val bytes = MessageDigest
-            .getInstance("SHA-256")
-            .digest(value.toByteArray(Charsets.UTF_8))
-
-        return bytes.joinToString("") { byte ->
-            "%02x".format(byte)
-        }
-    }
+    override fun onDestroy() { connected = false; worker.shutdown(); super.onDestroy() }
 }

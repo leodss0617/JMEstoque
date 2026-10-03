@@ -58,6 +58,9 @@ class MainActivity : ComponentActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        WhatsAppNotificationService.onCaptured = { runOnUiThread {
+            if (::webView.isInitialized) webView.evaluateJavascript("window.dispatchEvent(new Event('jm:notifications'));", null)
+        } }
         WindowCompat.setDecorFitsSystemWindows(window, true)
 
         // Clean up any improperly nested Code Cache inside HTTP Cache
@@ -387,7 +390,8 @@ class MainActivity : ComponentActivity() {
         @JavascriptInterface
         fun isWhatsAppMonitorEnabled(): Boolean {
             val flat = Settings.Secure.getString(contentResolver, "enabled_notification_listeners") ?: return false
-            return flat.contains(packageName)
+            val component = android.content.ComponentName(this@MainActivity, WhatsAppNotificationService::class.java)
+            return flat.split(':').any { android.content.ComponentName.unflattenFromString(it) == component }
         }
 
         @JavascriptInterface
@@ -395,6 +399,46 @@ class MainActivity : ComponentActivity() {
             runOnUiThread {
                 startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
             }
+        }
+        @JavascriptInterface
+        fun monitorSnapshot(): String = synchronized(WhatsAppNotificationService.lock) {
+            val p = getSharedPreferences(WhatsAppNotificationService.PREFS, MODE_PRIVATE)
+            val d = org.json.JSONObject()
+            for (k in listOf("lastConnection", "lastDisconnection", "lastNotification", "processingMs")) d.put(k, p.getLong(k, 0))
+            for (k in listOf("lastError", "lastConversation", "day")) d.put(k, p.getString(k, ""))
+            val today = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.ROOT).format(java.util.Date())
+            for (k in listOf("captured", "duplicates")) d.put(k, if (p.getString("day", "") == today) p.getInt(k, 0) else 0)
+            d.put("day", today)
+            d.put("connected", WhatsAppNotificationService.connected).put("access", isWhatsAppMonitorEnabled())
+                .put("enabled", p.getBoolean("enabled", true)).put("business", p.getBoolean("business", false))
+                .put("title", getWhatsAppMonitorTitle()).put("events", JSONArray(p.getString("inbox", "[]"))).toString()
+        }
+        @JavascriptInterface
+        fun monitorAck(ids: String) = synchronized(WhatsAppNotificationService.lock) {
+            val ack = JSONArray(ids); val set = HashSet<String>()
+            for (i in 0 until ack.length()) set.add(ack.getString(i))
+            val p = getSharedPreferences(WhatsAppNotificationService.PREFS, MODE_PRIVATE)
+            val old = JSONArray(p.getString("inbox", "[]")); val keep = JSONArray()
+            for (i in 0 until old.length()) if (!set.contains(old.getJSONObject(i).getString("id"))) keep.put(old.get(i))
+            p.edit().putString("inbox", keep.toString()).commit()
+            Unit
+        }
+        @JavascriptInterface
+        fun monitorConfigure(enabled: Boolean, business: Boolean, title: String) {
+            getSharedPreferences(WhatsAppNotificationService.PREFS, MODE_PRIVATE).edit()
+                .putBoolean("enabled", enabled).putBoolean("business", business).putString("authorized_title", title.trim()).apply()
+        }
+        @JavascriptInterface
+        fun deliveryAlert(count: Int) {
+            val manager = getSystemService(android.app.NotificationManager::class.java)
+            if (count <= 0) { manager.cancel(945); return }
+            if (Build.VERSION.SDK_INT >= 26) manager.createNotificationChannel(android.app.NotificationChannel("deliveries", "Entregas pendentes", android.app.NotificationManager.IMPORTANCE_DEFAULT))
+            val intent = android.app.PendingIntent.getActivity(this@MainActivity, 945, Intent(this@MainActivity, MainActivity::class.java), android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE)
+            val notification = androidx.core.app.NotificationCompat.Builder(this@MainActivity, "deliveries")
+                .setSmallIcon(android.R.drawable.ic_dialog_info).setContentTitle("Entregas aguardando confirmação")
+                .setContentText("$count pedido(s) pronto(s) / saindo").setGroup("jm-deliveries").setGroupSummary(true)
+                .setOngoing(true).setOnlyAlertOnce(true).setContentIntent(intent).build()
+            try { manager.notify(945, notification) } catch (_: SecurityException) { }
         }
         // JM_V93_BRIDGE_END
 
@@ -407,6 +451,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        WhatsAppNotificationService.onCaptured = null
         webView.destroy()
         super.onDestroy()
     }

@@ -319,3 +319,57 @@ Execução isolada final: `./gradlew :app:assembleDebug --no-daemon` — **BUILD
 APK copiado para `/storage/emulated/0/Download/JM-Estoque-v9.4.4.apk`, 3.538.937 bytes. SHA-256 da origem e da cópia: `aedb7c309e4de54a31bc698a9b82592db52c3228e8db3d9671b22e8913573280`. Não houve instalação, limpeza de dados ou troca da chave local.
 
 Pendências reais: testes Kotlin de exemplo sem dependências; validação de recebimento WhatsApp/genérico em aparelho; execução do workflow no GitHub; futura configuração de Secrets para assinatura CI compatível. O APK local e o workflow foram entregues, mas essas validações externas não são declaradas aprovadas.
+
+## v9.4.5 — notificações, totais e desempenho (02/10/2026)
+
+### Preservação e auditoria
+
+O checkout já continha alterações incompletas de v9.4.5. Antes desta revisão, foi criado `backups/v945-review/source-before.tgz` com fontes Android/WebView, configuração do módulo, testes e documentação. Backup ignorado pelo Git. Não houve instalação, limpeza de dados, exclusão de histórico ou alteração da assinatura. `versionName=9.4.5`, `versionCode=98`.
+
+### Causa da captura e fluxo final
+
+O Manifest já estava correto: `.WhatsAppNotificationService`, namespace `com.example`, permissão `android.permission.BIND_NOTIFICATION_LISTENER_SERVICE`, action `android.service.notification.NotificationListenerService`, `exported=true`. Não foi necessário alterar o Manifest. Acesso é comparado pelo ComponentName exato; o botão abre `Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS`. Não há AccessibilityService nem concessão automática.
+
+Falhas encontradas no código anterior: ausência de EXTRA_MESSAGES/MessagingStyle; deduplicação somente por título/texto durante 30s, suprimindo pedidos iguais distintos; marcação como visto antes do envio HTTP sem inbox durável; dependência da rede para entregar à fila; falta de diagnóstico de conexão/desconexão e reconexão. São evidências do código, não uma reprodução em aparelho da falha relatada.
+
+Fluxo novo: callback Android → executor de uma thread → extração → SharedPreferences `jm_whatsapp_monitor` (inbox e seen, commit verificado) → callback de atividade → evento `jm:notifications` → snapshot da bridge → `jm_delivery_sessions` no localStorage → ack somente após persistência da sessão → fila na aba Lançar. Reabertura/retorno retoma a inbox; falha de persistência JS impede ack. A entrada local independe da rede; a fila remota existente permanece disponível para registros anteriores, com ID estável ao registrar.
+
+Extração prefere mensagens estruturadas com remetente/pessoa e timestamp; fallback para linhas, BIG_TEXT/TEXT, título de conversa/título e subtexto. Resumos agrupados e textos de resumo são descartados. Apenas `com.whatsapp`; `com.whatsapp.w4b` exige opção habilitada. Conversa deve corresponder ao contato configurado (nome/número como aparece na notificação). Rebind na desconexão respeita intervalo mínimo de 60s e observação habilitada. Diagnóstico registra conexão, desconexão, última captura, conversa, erro, duração nativa e contadores do dia calendário.
+
+Deduplicação nativa usa SHA-256 de pacote, conversa, remetente, texto normalizado, key/id/tag e segundo do timestamp. Seen nativo expira após sete dias; JS mantém os IDs processados nas sessões persistentes. Limitação: notificações sem timestamps individuais dependem do `when`/postTime fornecido pelo WhatsApp; eventos idênticos no mesmo segundo e mesma chave são indistinguíveis. Validar atualizações e agrupamentos reais em dispositivo.
+
+### Pedidos e entrega
+
+Sessão de até 90s por conversa/remetente, sem ordem fixa. Produto repetido inicia outro pedido. Reconhece gas/gás/gaz/botijão, água, kasa/casa, portão e quatro pagamentos. Campos faltantes são exibidos; formulário permite completar/corrigir cliente, endereço, produto, quantidade e pagamento. Dados brutos são preservados. Estados: collecting, waiting_info, ready, out_for_delivery, delivered, cancelled.
+
+Receber/complementar pedido não cria lançamento. Confirmação textual só entrega quando existe exatamente um pedido completo aberto daquele remetente/conversa; ambiguidade exige botão. Botão pede confirmação. Lançamento tem ID `delivery_<pedido>`; repetição é idempotente, inclusive após reinício. `registeredAt` é persistido após salvar o histórico, evitando recriar vendas deliberadamente removidas depois. Pagamentos são convertidos para os nomes já usados pelo app (PIX, Espécie, Débito, Crédito). A fila remota também verifica ID estável antes de confirmar registro ao servidor.
+
+Alerta visível e notificação local agrupada permanecem para pedidos ready/out_for_delivery, e são retirados quando nenhum resta. A permissão de notificações do próprio app ainda depende do Android. Enquanto a WebView estiver fechada, o listener guarda eventos; parsing/atualização do alerta da fila ocorre quando ela voltar. Não se declara processamento integral da fila com app fechado.
+
+### Totais físicos e regras preservadas
+
+Fonte existente reutilizada: `jm_cfg.totGas` e `jm_cfg.totAgua`; não foram criadas chaves concorrentes gasPhysicalTotal/waterPhysicalTotal. Config exibe `calc().totG/totA`, como Início/Resumo/Relatório. O motor legado aplica movimentos posteriores ao checkpoint sobre a base configurada; por isso o ajuste altera a base pela diferença entre novo total e total calculado atual, sem reaplicar ou apagar movimentos. Exemplo: base 203, venda de vasilhame -1, total atual 202; informar 205 ajusta a base para 206 e o cálculo continua resultando em 205.
+
+Inteiros >=0, confirmação, auditoria `jm_cfg.physicalTotalAdjustments` com data ISO, produto, anterior, novo e origem. Zero deixa de cair no fallback da fórmula ativa. Backup/nuvem já incluem cfg e chaves `jm_`; totais, auditoria e sessões seguem esse fluxo, sem alterar senha/dispositivo. Nenhum lançamento artificial é criado.
+
+Gás: déficit=max(0,-cheios operacional); usando separados=min(déficit,cadastrados); livres=cadastrados-usando; cheios físicos=max(0,operacional); pátio=total próprio-cheios físicos-livres. Separados livres são vazios próprios; emprestados cobrem déficit após separados, mas não compõem total próprio. O déficit operacional não é mostrado como contagem física negativa. Água: separados ainda cheios são subconjunto dos cheios; vazios=total-cheios; separados convertidos seguem a regra sepContaVazio validada. As fórmulas de v9.4.4 foram mantidas.
+
+### Gargalos, medições e mudanças
+
+O renderer de Pendentes montava todos os cards em uma string em cada tecla. Comparação local com 2.000 clientes sintéticos (cada um com gás e água), Node/DOM simulado: v9.4.4, 4.000 cards, 5.685.048 bytes HTML, 42,34ms; v9.4.5, 80 cards, 115.004 bytes, 3,74ms. São tempos de construção do HTML, não FPS nem tempo real de pintura no Android.
+
+Agora 40 cards por produto com Mostrar mais; busca e somatórios consideram todos os dados antes de paginar. Busca tem debounce de 140ms + requestAnimationFrame. Fila local mostra 30 pedidos por lote. Eventos nativos consecutivos são agrupados por frame; atualização do alerta nativo só quando muda a contagem. Sessões não são regravadas em snapshots vazios. Entregas já registradas não percorrem novamente o histórico para serem lançadas. Guardas impedem inicialização/listeners duplicados e refresh remoto concorrente. Polling legado passou de 7s para 30s; polling de status local de 5s removido. CSS da fila sem sombras e alerta sticky. WebView existente é preservada.
+
+Diagnóstico de desempenho mede abertura de abas, renderDash, renderPendentes, geração de relatório, processamento da notificação, itens exibidos e totais. Funções assíncronas são medidas até sua resolução. Relatório continua por ação do usuário, inclusive mudança de tema; compartilhamento usa o artefato da prévia validado na v9.4.4. Não houve reescrita do canvas nem promessa de eliminar qualquer pausa em relatórios muito grandes.
+
+### Testes e arquivos
+
+Oito suítes `.cjs` executadas, todas aprovadas: operacional (25), entregas (18), histórico/chat (8), relatório v9.4.2 (23), relatório v9.4.3 (31 cenários próprios, além da base v9.4.2), compartilhamento v9.4.4, UI v9.4.5 e desempenho v9.4.5. Logs locais em `tests/*.cjs.log`, ignorados pelo Git.
+
+Cobertura nova: parsers pedidos simples/fragmentados/fora de ordem, dedupe, pedidos iguais distintos, isolamento por remetente, resumo ignorado, pacotes e Business opt-in, antes/depois de delivered com motor real de estoque, confirmação dupla/reinício/ambiguidade, totais zero e persistidos, backup/restauração, ajuste com auditoria sem apagar histórico, inicialização duplicada, coalescimento de eventos, rerender estável, paginação com busca no último registro. Regressões existentes cobrem água separada, gás negativo, empréstimos fora do total próprio, calendário diário e imagem correta compartilhada.
+
+Arquivos alterados/adicionados: `app/build.gradle.kts`, `app/src/main/assets/index.html`, `entregas.js`, `v945-ui.js`, `MainActivity.kt`, `WhatsAppNotificationService.kt`, `tests/operacional-v94.cjs`, `tests/entregas-v945.cjs`, `tests/ui-v945.cjs`, `tests/desempenho-v945.cjs`, prompt v9.4.5 preexistente e este relatório. Manifest, assinatura e workflow mantidos.
+
+Build local `./gradlew :app:assembleDebug --no-daemon`: duas execuções aprovadas (2m24s e 2m39s); verificação final após últimos ajustes **BUILD SUCCESSFUL in 2m25s**, saída 0, em `build-v945-verified.log`. Certificado do APK inspecionado: SHA-256 `5ddd1dfb90c132a677800df1ccfd6164cb931e41ada2a1eeaedcbcb61461038b`, igual ao certificado anterior. A configuração atual do Actions já restaura a assinatura via Secret; não foi alterada nem exposta.
+
+Pendências reais: ADB sem dispositivos conectados; falta validar notificações reais normais/Business, acesso/reconexão pelo sistema, funcionamento em segundo plano, permissão do alerta local, scroll/pintura/digitação e relatório grande no aparelho. Testes Android de exemplo continuam com a limitação de dependências descrita na v9.4.4; não foram declarados aprovados. Parser é heurístico: informações não reconhecidas exigem revisão manual. Publicação e execução Actions serão registradas após push.

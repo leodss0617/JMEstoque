@@ -1,0 +1,13 @@
+'use strict';
+const fs=require('fs'),vm=require('vm'),assert=require('node:assert/strict');
+const html=fs.readFileSync('app/src/main/assets/index.html','utf8');
+const source=html.slice(html.indexOf('function renderPendentes(){'),html.indexOf('async function apagarTodosPendentes(){'));
+const elements={pendLista:{innerHTML:''},pendBusca:{value:''}};
+const fixtures=Array.from({length:2000},(_,i)=>({nome:'Cliente '+i,sepAgua:1,sepGas:1}));
+const s={document:{getElementById:id=>elements[id]},norm:v=>v.toLowerCase(),calcPendentes:()=>fixtures,jm945Metrics:{},jmPendLimit:40};s.window=s;vm.createContext(s);vm.runInContext(source,s);
+const start=performance.now();s.renderPendentes();const elapsed=performance.now()-start;
+assert.equal((elements.pendLista.innerHTML.match(/👤/g)||[]).length,80);
+assert.equal(s.jm945Metrics.itensPendentes.total,4000);
+const first=elements.pendLista.innerHTML;s.renderPendentes();assert.equal(elements.pendLista.innerHTML,first);
+elements.pendBusca.value='Cliente 1999';s.renderPendentes();assert.equal((elements.pendLista.innerHTML.match(/👤/g)||[]).length,2);assert(elements.pendLista.innerHTML.includes('Cliente 1999'));
+console.log(`OK 2000 clientes: ${elapsed.toFixed(2)} ms (Node, DOM simulado), 80/4000 cards; busca alcança último registro; rerender estável`);
